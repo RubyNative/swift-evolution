@@ -2,7 +2,7 @@
 * Author: [Kelvin Ma](https://github.com/kelvin13) ([@*taylorswift*](https://forums.swift.org/u/taylorswift/summary))
 * Review manager: 
 * Status: *Awaiting review*
-* Implementation: 
+* Implementation: [apple/swift#19936](https://github.com/apple/swift/pull/19936)
 * Threads: [1](https://forums.swift.org/t/prepitch-character-integer-literals/10442)
 
 ## Introduction
@@ -123,9 +123,56 @@ let d: Int8  = 'Ƥ' // error: character literal 'Ƥ' overflows when stored into 
 
 ## Detailed Design 
 
-**TODO** (from clattner):  This needs to be significantly expanded.  We need to have a 'CharacterLiteralType = Character', describe the lexer changes, describe the actual protocol and changes to the standard library.  This section should talk about the additive pieces of this proposal, not the deprecations.
+These new `character` literals will have default type `Character` and be statically checked to contain only a single extended grapheme cluster. They will be processed largely as if they were a short `String`.
 
-This proposal will add `ExpressibleByUnicodeScalarLiteral` conformance to all Swift integer types. It will also slightly change the Swift lexer to interpret single quoted tokens as `Unicode.Scalar` literals. 
+When the `Character` is representable by a single UNICODE `codepoint` however, (a 20 bit number) they will be able to express a Unicode.Scalar and any of the integer types provided the codepoint value fits into that type.
+
+As an example:
+
+```
+let a = 'a' // This will have type Character
+let s: Unicode.Scalar = 'a' // is also possible
+let i: Int8 = 'a' // takes the ASCII value
+```
+In order to implement this a new protocol `ExpressibleByCodepointLiteral` is created
+and used for character literals that are also a single codepoint instead of `ExpressibleByExtendedGraphemeClusterLiteral`. Conformances to this protocol for `Unicode.Scalar`, `Character` and `String` will be added to the standard library so these literals can operate in any of those roles. In addition, conformances to `ExpressibleByCodepointLiteral` will be added to all integer types in the standard library so a character literal can initialize variables of integer type (subject to a compile time range check) or satisfy the type checker for arguments of these integer types. 
+
+These new conformances and the existing operators defined in the Swift language will make the following code possible out of the box:
+
+```
+func unhex(_ hex: String) throws -> Data {
+    guard hex.utf16.count % 2 == 0 else {
+        throw NSError(domain: "odd characters", code: -1, userInfo: nil)
+    }
+
+    func nibble(_ char: UInt16) throws -> UInt16 {
+        switch char {
+        case '0' ... '9':
+            return char - '0'
+        case 'a' ... 'f':
+            return char - 'a' + 10
+        case 'A' ... 'F':
+            return char - 'A' + 10
+        default:
+            throw NSError(domain: "bad character", code: -1, userInfo: nil)
+        }
+    }
+
+    var out = Data(capacity: hex.utf16.count/2)
+    var chars = hex.utf16.makeIterator()
+    while let next = chars.next() {
+        try out.append(UInt8((nibble(next) << 4) + nibble(chars.next()!)))
+    }
+
+    return out
+}
+```
+One area which may involve ambiguity is the `+` operator which can mean either String concatenation or addition on integer values. Generally this wouldn't be a problem as most reasonable contexts will provide the type checker the information to make the correct decision.
+
+```
+print('1' + '1' as String) // prints 11
+print('1' + '1' as Int) // prints 98
+```
 
 ## Source compatibility 
 
@@ -152,7 +199,8 @@ None.
 
 **TODO** (from clattner): I really don't think this is a good idea.  We should have a consistent character model.
 
-
 Lots of people suggested this in the prepitch thread for this proposal. Since `Character` *literals* and `Unicode.Scalar` *literals* would look exactly the same (since we would have to make `Character` take single quotes too), there would be zero sugaring benefit gained from this. 
 
-Some people like the idea of making the quote type indicate the “length” (1 or greater than 1) of the literal object, in which case `Character` would take single quotes as well. This notational change is orthogonal to this proposal and can be done separately in another proposal.
+Some people like the idea of making the quote type indicate the “length” (1 or greater than 1) of the literal object, in which case `Character` would take single quotes as well. This notational change is orthogonal to this proposal and can be done separately in another proposal. 
+
+ It was not possible to re-use the `ExpressibleByUnicodeScalarLiteral` protocol as this is historically an ancestor of `ExpressibleByStringLiteral` and changing conformances to it would affect double quoted string literals.

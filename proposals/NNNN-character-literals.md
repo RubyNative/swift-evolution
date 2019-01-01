@@ -125,7 +125,7 @@ let d: Int8  = 'Ƥ' // error: character literal 'Ƥ' overflows when stored into 
 
 These new `character` literals will have default type `Character` and be statically checked to contain only a single extended grapheme cluster. They will be processed largely as if they were a short `String`.
 
-When the `Character` is representable by a single UNICODE `codepoint` however, (a 20 bit number) they will be able to express a Unicode.Scalar and any of the integer types provided the codepoint value fits into that type.
+When the `Character` is representable by a single UNICODE `codepoint` however, (a 21 bit number) they will be able to express a Unicode.Scalar and any of the integer types provided the codepoint value fits into that type.
 
 As an example:
 
@@ -134,8 +134,43 @@ let a = 'a' // This will have type Character
 let s: Unicode.Scalar = 'a' // is also possible
 let i: Int8 = 'a' // takes the ASCII value
 ```
-In order to implement this a new protocol `ExpressibleByCodepointLiteral` is created
-and used for character literals that are also a single codepoint instead of `ExpressibleByExtendedGraphemeClusterLiteral`. Conformances to this protocol for `Unicode.Scalar`, `Character` and `String` will be added to the standard library so these literals can operate in any of those roles. In addition, conformances to `ExpressibleByCodepointLiteral` will be added to all integer types in the standard library so a character literal can initialize variables of integer type (subject to a compile time range check) or satisfy the type checker for arguments of these integer types. 
+In order to make way for the new implementation the existing protocols `ExpressibleByUnicodeScalarLiteral` and `ExpressibleByExtendedGraphemeClusterLiteral` which allow `Unicode.Scalar` and `Character `variables to be initialized by String literals will be renamed to have a prefix "_Legacy". This allows this existing Swift4 behaviour to continue working during the transition.
+
+The `ExpressibleByUnicodeScalarLiteral` protocol name will be reused to create a new protocol based on `ExpressibleByIntegerLiteral` to which the basic Int types conform to so integers can be initialised to ASCII/Unicode code point values subject to a compile time range check, with additional conformances in `Unicode.Scalar` and `Character` so these types of variable can be initialised as before.
+
+Finally a new version of `ExpressibleByExtendedGraphemeClusterLiteral` with the same signature renamed 
+`ExpressibleByCharacterLiteral` to reflect the type it generally initializes. If this sounds complicated, overall it is a renaming just two protocols and re-implementing them as described below:
+
+Before:
+
+```
+ExpressibleByUnicodeScalarLiteral
+                   ↓ 
+ExpressibleByExtendedGraphemeClusterLiteral
+                   ↓ 
+ExpressibleByStringLiteral
+
+typealias StringLiteralType                  = String 
+typealias ExtendedGraphemeClusterLiteralType = String
+typealias UnicodeScalarLiteralType           = String 
+```
+After:
+
+```
+ExpressibleByUnicodeScalarLiteral   _LegacyExpressibleByUnicodeScalarLiteral
+             ↓                                               ↓ 
+ExpressibleByCharacterLiteral       _LegacyExpressibleByExtendedGraphemeClusterLiteral
+                                                             ↓ 
+                                           ExpressibleByStringLiteral
+
+typealias StringLiteralType                         = String 
+typealias _LegacyExtendedGraphemeClusterLiteralType = String
+typealias _LegacyUnicodeScalarLiteralType           = String 
+typealias CharacterLiteralType     = Character 
+typealias UnicodeScalarLiteralType = Character
+```
+
+This rearrangement of the protocols satisfies the need to separate the new character based protocols from `ExpressibleByStringLiteral` to avoid Strings from being expressible Int conformances while maintaining Swift4 behaviour during the transition.
 
 These new conformances and the existing operators defined in the Swift language will make the following code possible out of the box:
 
@@ -166,12 +201,6 @@ func unhex(_ hex: String) throws -> Data {
 
     return out
 }
-```
-One area which may involve ambiguity is the `+` operator which can mean either String concatenation or addition on integer values. Generally this wouldn't be a problem as most reasonable contexts will provide the type checker the information to make the correct decision.
-
-```
-print('1' + '1' as String) // prints 11
-print('1' + '1' as Int) // prints 98
 ```
 
 ## Source compatibility 
